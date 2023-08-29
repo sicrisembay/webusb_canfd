@@ -1,3 +1,4 @@
 [submodule "components/tinyusb"]
 	path = components/tinyusb
 	url = https://github.com/sicrisembay/tinyusb.git
+	branch = canable_v2
