@@ -8,3 +8,6 @@
 [submodule "components/stm32g4xx_hal_driver"]
 	path = components/stm32g4xx_hal_driver
 	url = https://github.com/STMicroelectronics/stm32g4xx_hal_driver.git
+[submodule "components/CMSIS_5"]
+	path = components/CMSIS_5
+	url = https://github.com/ARM-software/CMSIS_5.git
