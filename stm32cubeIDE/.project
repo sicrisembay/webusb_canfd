@@ -28,4 +28,10 @@
 		<nature>org.eclipse.cdt.managedbuilder.core.managedBuildNature</nature>
 		<nature>org.eclipse.cdt.managedbuilder.core.ScannerConfigNature</nature>
 	</natures>
+	<variableList>
+		<variable>
+			<name>TINYUSB_LOC</name>
+			<value>$%7BPARENT-1-PROJECT_LOC%7D/components/tinyusb</value>
+		</variable>
+	</variableList>
 </projectDescription>

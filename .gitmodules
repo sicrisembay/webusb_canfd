@@ -2,3 +2,9 @@
 	path = components/tinyusb
 	url = https://github.com/sicrisembay/tinyusb.git
 	branch = canable_v2
+[submodule "components/cmsis_device_g4"]
+	path = components/cmsis_device_g4
+	url = https://github.com/STMicroelectronics/cmsis_device_g4.git
+[submodule "components/stm32g4xx_hal_driver"]
+	path = components/stm32g4xx_hal_driver
+	url = https://github.com/STMicroelectronics/stm32g4xx_hal_driver.git
