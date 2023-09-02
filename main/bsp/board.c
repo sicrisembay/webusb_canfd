@@ -1,6 +1,49 @@
 #include "stdbool.h"
 #include "stdint.h"
 #include "stm32g4xx_hal.h"
+#include "bsp/board_api.h"
+
+static FDCAN_HandleTypeDef hfdcan1;
+
+
+void HAL_MspInit(void)
+{
+    __HAL_RCC_SYSCFG_CLK_ENABLE();
+    __HAL_RCC_PWR_CLK_ENABLE();
+}
+
+
+void HAL_FDCAN_MspInit(FDCAN_HandleTypeDef* hfdcan)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
+    if(hfdcan->Instance==FDCAN1) {
+        /*
+         * Initializes the peripherals clocks
+         */
+        PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_FDCAN;
+        PeriphClkInit.FdcanClockSelection = RCC_FDCANCLKSOURCE_PCLK1;
+        if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK) {
+            __disable_irq();
+            while(1);
+        }
+        /* Peripheral clock enable */
+        __HAL_RCC_FDCAN_CLK_ENABLE();
+        __HAL_RCC_GPIOB_CLK_ENABLE();
+        /*
+         * FDCAN1 GPIO Configuration
+         * PB8-BOOT0------> FDCAN1_RX
+         * PB9      ------> FDCAN1_TX
+         */
+        GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
+        GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+        GPIO_InitStruct.Pull = GPIO_NOPULL;
+        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+        GPIO_InitStruct.Alternate = GPIO_AF9_FDCAN1;
+        HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    }
+}
+
 
 static void SystemClock_Config(void)
 {
@@ -53,20 +96,74 @@ static void SystemClock_Config(void)
 }
 
 
+static void BoardGpio_Config(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    __HAL_RCC_GPIOA_CLK_ENABLE();   // GREEN and LED use GPIOA
+
+    /* Initialize Green LED */
+    HAL_GPIO_WritePin(GREEN_LED_Port, GREEN_LED_Pin, GPIO_PIN_SET);
+    GPIO_InitStruct.Pin = GREEN_LED_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GREEN_LED_Port, &GPIO_InitStruct);
+    /* Initialize Blue LED */
+    HAL_GPIO_WritePin(BLUE_LED_Port, BLUE_LED_Pin, GPIO_PIN_SET);
+    GPIO_InitStruct.Pin = BLUE_LED_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(BLUE_LED_Port, &GPIO_InitStruct);
+}
+
+
+static void BoardCAN_Config(void)
+{
+    hfdcan1.Instance = FDCAN1;
+    hfdcan1.Init.ClockDivider = FDCAN_CLOCK_DIV1;
+    hfdcan1.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
+    hfdcan1.Init.Mode = FDCAN_MODE_NORMAL;
+    hfdcan1.Init.AutoRetransmission = ENABLE;
+    hfdcan1.Init.TransmitPause = DISABLE;
+    hfdcan1.Init.ProtocolException = DISABLE;
+    hfdcan1.Init.NominalPrescaler = 16;
+    hfdcan1.Init.NominalSyncJumpWidth = 1;
+    hfdcan1.Init.NominalTimeSeg1 = 2;
+    hfdcan1.Init.NominalTimeSeg2 = 2;
+    hfdcan1.Init.DataPrescaler = 1;
+    hfdcan1.Init.DataSyncJumpWidth = 1;
+    hfdcan1.Init.DataTimeSeg1 = 1;
+    hfdcan1.Init.DataTimeSeg2 = 1;
+    hfdcan1.Init.StdFiltersNbr = 0;
+    hfdcan1.Init.ExtFiltersNbr = 0;
+    hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
+    if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK)
+    {
+        __disable_irq();
+        while(1);
+    }
+}
+
+
 void board_init()
 {
     HAL_Init();
     SystemClock_Config();
+    BoardGpio_Config();
+#if 0
+    BoardCAN_Config();
+#endif
 }
 
 
 void board_led_write(bool isOn)
 {
-    (void)isOn;
+    if(isOn) {
+        HAL_GPIO_WritePin(GREEN_LED_Port, GREEN_LED_Pin, GPIO_PIN_RESET);
+    } else {
+        HAL_GPIO_WritePin(GREEN_LED_Port, GREEN_LED_Pin, GPIO_PIN_SET);
+    }
 
-}
-
-uint32_t board_millis(void)
-{
-    return 0;
 }

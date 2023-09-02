@@ -40,6 +40,11 @@
 			<locationURI>COMPONENTS_LOC/CMSIS_5/CMSIS/Core/Include</locationURI>
 		</link>
 		<link>
+			<name>components/FreeRTOS-Kernel</name>
+			<type>2</type>
+			<locationURI>TINYUSB_LOC/lib/FreeRTOS-Kernel</locationURI>
+		</link>
+		<link>
 			<name>components/cmsis_device_g4</name>
 			<type>2</type>
 			<locationURI>COMPONENTS_LOC/cmsis_device_g4</locationURI>

@@ -41,6 +41,11 @@ extern "C" {
 #define CFG_BOARD_UART_BAUDRATE 115200   ///< Default baud rate
 #endif
 
+#define GREEN_LED_Pin       GPIO_PIN_0
+#define GREEN_LED_Port      GPIOA
+#define BLUE_LED_Pin        GPIO_PIN_15
+#define BLUE_LED_Port       GPIOA
+
 //--------------------------------------------------------------------+
 // Board Porting API
 // For simplicity, only one LED and one Button are used

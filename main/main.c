@@ -46,7 +46,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-
+#include "FreeRTOS.h"
+#include "timers.h"
 #include "bsp/board_api.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
@@ -83,30 +84,36 @@ const tusb_desc_webusb_url_t desc_url =
 
 static bool web_serial_connected = false;
 
+#if configSUPPORT_STATIC_ALLOCATION
+StaticTimer_t blinky_tmdef;
+#endif
+TimerHandle_t blinky_tm;
+
 //------------- prototypes -------------//
-void led_blinking_task(void);
+static void led_blinky_cb(TimerHandle_t xTimer);
 void cdc_task(void);
 void webserial_task(void);
 
 /*------------- MAIN -------------*/
 int main(void)
 {
-  board_init();
+    board_init();
 
-  // init device stack on configured roothub port
-  tud_init(BOARD_TUD_RHPORT);
+#if 0
+    // init device stack on configured roothub port
+    tud_init(BOARD_TUD_RHPORT);
 
-  if (board_init_after_tusb) {
-    board_init_after_tusb();
-  }
+    if (board_init_after_tusb) {
+        board_init_after_tusb();
+    }
+#endif
 
-  while (1)
-  {
-    tud_task(); // tinyusb device task
-    cdc_task();
-    webserial_task();
-    led_blinking_task();
-  }
+#if configSUPPORT_STATIC_ALLOCATION
+    blinky_tm = xTimerCreateStatic(NULL, pdMS_TO_TICKS(BLINK_NOT_MOUNTED), true, NULL, led_blinky_cb, &blinky_tmdef);
+#endif
+    xTimerStart(blinky_tm, 0);
+
+    vTaskStartScheduler();
 }
 
 // send characters to both CDC and WebUSB
@@ -291,14 +298,10 @@ void tud_cdc_rx_cb(uint8_t itf)
 //--------------------------------------------------------------------+
 // BLINKING TASK
 //--------------------------------------------------------------------+
-void led_blinking_task(void)
+static void led_blinky_cb(TimerHandle_t xTimer)
 {
-  static uint32_t start_ms = 0;
+  (void) xTimer;
   static bool led_state = false;
-
-  // Blink every interval ms
-  if ( board_millis() - start_ms < blink_interval_ms) return; // not enough time
-  start_ms += blink_interval_ms;
 
   board_led_write(led_state);
   led_state = 1 - led_state; // toggle
