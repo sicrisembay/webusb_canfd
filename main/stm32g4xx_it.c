@@ -19,6 +19,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32g4xx_it.h"
+#include "tusb.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -160,3 +161,20 @@ void DebugMon_Handler(void)
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
+
+void USB_HP_IRQHandler(void) {
+    tud_int_handler(0);
+}
+
+void USB_LP_IRQHandler(void) {
+    tud_int_handler(0);
+}
+
+void USBWakeUp_IRQHandler(void) {
+    tud_int_handler(0);
+}
+
+// USB PD
+void UCPD1_IRQHandler(void) {
+    tuc_int_handler(0);
+}
