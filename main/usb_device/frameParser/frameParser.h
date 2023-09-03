@@ -12,6 +12,10 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 
+#ifndef CONFIG_CMD_FRAME_SIZE
+#define CONFIG_CMD_FRAME_SIZE           (128)
+#endif /* CONFIG_CMD_FRAME_SIZE */
+
 typedef int32_t (* cbValidFrame)(uint32_t);
 
 typedef struct {

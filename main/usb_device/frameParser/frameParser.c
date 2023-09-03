@@ -16,10 +16,6 @@
 #define CONFIG_PARSER_TX_BUF_SIZE       (512)
 #endif /* CONFIG_PARSER_TX_BUF_SIZE */
 
-#ifndef CONFIG_CMD_FRAME_SIZE
-#define CONFIG_CMD_FRAME_SIZE           (128)
-#endif /* CONFIG_CMD_FRAME_SIZE */
-
 /*
  * Frame Format
  *   TAG        : 1 byte
