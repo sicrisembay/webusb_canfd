@@ -11,6 +11,7 @@
 #include "timers.h"
 #include "tusb.h"
 #include "webusb.h"
+#include "frameParser/frameParser.h"
 #include "usb_descriptors.h"
 #include "bsp/board_api.h"
 
@@ -223,6 +224,10 @@ void webusb_stack(void)
             uint32_t count = tud_vendor_read(buf, sizeof(buf));
 
             if(count) {
+                /* push the receive data to frame parser */
+                frame_parser_receive(buf, count);
+                frame_parser_process();
+
                 // echo back to both web serial and cdc
                 echo_all(buf, count);
             }
