@@ -3,7 +3,9 @@
 #include "stm32g4xx_hal.h"
 #include "bsp/board_api.h"
 
+#if 0
 static FDCAN_HandleTypeDef hfdcan1;
+#endif
 static PCD_HandleTypeDef hpcd_USB_FS;
 
 
@@ -120,6 +122,7 @@ static void BoardGpio_Config(void)
 }
 
 
+#if 0
 static void BoardCAN_Config(void)
 {
     hfdcan1.Instance = FDCAN1;
@@ -146,6 +149,7 @@ static void BoardCAN_Config(void)
         while(1);
     }
 }
+#endif
 
 
 static void MX_USB_PCD_Init(void)
