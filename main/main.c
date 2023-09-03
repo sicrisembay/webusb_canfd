@@ -1,52 +1,11 @@
-/*
- * The MIT License (MIT)
- *
- * Copyright (c) 2019 Ha Thach (tinyusb.org)
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
+/*!
+ * \file main.c
  */
-
-/* This example demonstrates WebUSB as web serial with browser with WebUSB support (e.g Chrome).
- * After enumerated successfully, browser will pop-up notification
- * with URL to landing page, click on it to test
- *  - Click "Connect" and select device, When connected the on-board LED will litted up.
- *  - Any charters received from either webusb/Serial will be echo back to webusb and Serial
- *
- * Note:
- * - The WebUSB landing page notification is currently disabled in Chrome
- * on Windows due to Chromium issue 656702 (https://crbug.com/656702). You have to
- * go to landing page (below) to test
- *
- * - On Windows 7 and prior: You need to use Zadig tool to manually bind the
- * WebUSB interface with the WinUSB driver for Chrome to access. From windows 8 and 10, this
- * is done automatically by firmware.
- *
- * - On Linux/macOS, udev permission may need to be updated by
- *   - copying '/examples/device/99-tinyusb.rules' file to /etc/udev/rules.d/ then
- *   - run 'sudo udevadm control --reload-rules && sudo udevadm trigger'
- */
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-
+#include "FreeRTOS.h"
+#include "timers.h"
 #include "bsp/board_api.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
@@ -54,22 +13,24 @@
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF PROTYPES
 //--------------------------------------------------------------------+
+#define USBD_STACK_SIZE         (3*configMINIMAL_STACK_SIZE)
+#define CLASS_STACK_SIZE        (2*configMINIMAL_STACK_SIZE)
 
-/* Blink pattern
+/*
+ * Blink pattern
  * - 250 ms  : device not mounted
  * - 1000 ms : device mounted
  * - 2500 ms : device is suspended
  */
 enum  {
-  BLINK_NOT_MOUNTED = 250,
-  BLINK_MOUNTED     = 1000,
-  BLINK_SUSPENDED   = 2500,
+    BLINK_NOT_MOUNTED = 250,
+    BLINK_MOUNTED     = 500,
+    BLINK_SUSPENDED   = 750,
 
-  BLINK_ALWAYS_ON   = UINT32_MAX,
-  BLINK_ALWAYS_OFF  = 0
+    BLINK_ALWAYS_ON   = UINT32_MAX,
+    BLINK_ALWAYS_OFF  = 0
 };
 
-static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 
 #define URL  "example.tinyusb.org/webusb-serial/index.html"
 
@@ -83,54 +44,92 @@ const tusb_desc_webusb_url_t desc_url =
 
 static bool web_serial_connected = false;
 
+#if configSUPPORT_STATIC_ALLOCATION
+StaticTimer_t blinky_tmdef;
+StackType_t  usb_device_stack[USBD_STACK_SIZE];
+StaticTask_t usb_device_taskdef;
+StackType_t  usb_class_stack[CLASS_STACK_SIZE];
+StaticTask_t usb_class_taskdef;
+#endif
+
+TimerHandle_t blinky_tm;
+
 //------------- prototypes -------------//
-void led_blinking_task(void);
-void cdc_task(void);
-void webserial_task(void);
+static void led_blinky_cb(TimerHandle_t xTimer);
+static void usb_device_task(void* param);
+void class_task(void* params);
 
 /*------------- MAIN -------------*/
 int main(void)
 {
-  board_init();
+    board_init();
 
-  // init device stack on configured roothub port
-  tud_init(BOARD_TUD_RHPORT);
+#if configSUPPORT_STATIC_ALLOCATION
+    blinky_tm = xTimerCreateStatic(NULL, pdMS_TO_TICKS(BLINK_NOT_MOUNTED), true, NULL, led_blinky_cb, &blinky_tmdef);
+    /*
+     * Create a task for tinyusb device stack
+     */
+    xTaskCreateStatic(usb_device_task, "usb-device", USBD_STACK_SIZE, NULL, configMAX_PRIORITIES-1, usb_device_stack, &usb_device_taskdef);
+    /*
+     * Create Class task
+     */
+    xTaskCreateStatic(class_task, "usb-class", CLASS_STACK_SIZE, NULL, configMAX_PRIORITIES-2, usb_class_stack, &usb_class_taskdef);
 
-  if (board_init_after_tusb) {
-    board_init_after_tusb();
-  }
+#endif
+    xTimerStart(blinky_tm, 0);
 
-  while (1)
-  {
-    tud_task(); // tinyusb device task
-    cdc_task();
-    webserial_task();
-    led_blinking_task();
-  }
+    vTaskStartScheduler();
 }
+
+
+// USB Device Driver task
+// This top level thread process all usb events and invoke callbacks
+static void usb_device_task(void* param)
+{
+    (void) param;
+
+    // init device stack on configured roothub port
+    // This should be called after scheduler/kernel is started.
+    // Otherwise it could cause kernel issue since USB IRQ handler does use RTOS queue API.
+    tud_init(BOARD_TUD_RHPORT);
+
+    if (board_init_after_tusb) {
+        board_init_after_tusb();
+    }
+
+    // RTOS forever loop
+    while (1) {
+        // put this thread to waiting state until there is new events
+        tud_task();
+
+        // following code only run if tud_task() process at least 1 event
+        tud_cdc_write_flush();
+    }
+}
+
 
 // send characters to both CDC and WebUSB
 void echo_all(uint8_t buf[], uint32_t count)
 {
-  // echo to web serial
-  if ( web_serial_connected )
-  {
-    tud_vendor_write(buf, count);
-    tud_vendor_write_flush();
-  }
-
-  // echo to cdc
-  if ( tud_cdc_connected() )
-  {
-    for(uint32_t i=0; i<count; i++)
-    {
-      tud_cdc_write_char(buf[i]);
-
-      if ( buf[i] == '\r' ) tud_cdc_write_char('\n');
+    // echo to web serial
+    if ( web_serial_connected ) {
+        tud_vendor_write(buf, count);
+        tud_vendor_write_flush();
     }
-    tud_cdc_write_flush();
-  }
+
+    // echo to cdc
+    if ( tud_cdc_connected() ) {
+        for(uint32_t i=0; i<count; i++) {
+            tud_cdc_write_char(buf[i]);
+
+            if ( buf[i] == '\r' ) {
+                tud_cdc_write_char('\n');
+            }
+        }
+        tud_cdc_write_flush();
+    }
 }
+
 
 //--------------------------------------------------------------------+
 // Device callbacks
@@ -139,113 +138,114 @@ void echo_all(uint8_t buf[], uint32_t count)
 // Invoked when device is mounted
 void tud_mount_cb(void)
 {
-  blink_interval_ms = BLINK_MOUNTED;
+    xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_MOUNTED), 0);
 }
+
 
 // Invoked when device is unmounted
 void tud_umount_cb(void)
 {
-  blink_interval_ms = BLINK_NOT_MOUNTED;
+    xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_NOT_MOUNTED), 0);
 }
+
 
 // Invoked when usb bus is suspended
 // remote_wakeup_en : if host allow us  to perform remote wakeup
 // Within 7ms, device must draw an average of current less than 2.5 mA from bus
 void tud_suspend_cb(bool remote_wakeup_en)
 {
-  (void) remote_wakeup_en;
-  blink_interval_ms = BLINK_SUSPENDED;
+    (void) remote_wakeup_en;
+    xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_SUSPENDED), 0);
 }
+
 
 // Invoked when usb bus is resumed
 void tud_resume_cb(void)
 {
-  blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
+    if (tud_mounted()) {
+        xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_MOUNTED), 0);
+    } else {
+        xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_NOT_MOUNTED), 0);
+    }
 }
+
 
 //--------------------------------------------------------------------+
 // WebUSB use vendor class
 //--------------------------------------------------------------------+
-
 // Invoked when a control transfer occurred on an interface of this class
 // Driver response accordingly to the request and the transfer stage (setup/data/ack)
 // return false to stall control endpoint (e.g unsupported request)
 bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const * request)
 {
-  // nothing to with DATA & ACK stage
-  if (stage != CONTROL_STAGE_SETUP) return true;
+    // nothing to with DATA & ACK stage
+    if (stage != CONTROL_STAGE_SETUP) return true;
 
-  switch (request->bmRequestType_bit.type)
-  {
-    case TUSB_REQ_TYPE_VENDOR:
-      switch (request->bRequest)
-      {
-        case VENDOR_REQUEST_WEBUSB:
-          // match vendor request in BOS descriptor
-          // Get landing page url
-          return tud_control_xfer(rhport, request, (void*)(uintptr_t) &desc_url, desc_url.bLength);
+    switch (request->bmRequestType_bit.type) {
+        case TUSB_REQ_TYPE_VENDOR:
+            switch (request->bRequest) {
+                case VENDOR_REQUEST_WEBUSB:
+                    // match vendor request in BOS descriptor
+                    // Get landing page url
+                    return tud_control_xfer(rhport, request, (void*)(uintptr_t) &desc_url, desc_url.bLength);
 
-        case VENDOR_REQUEST_MICROSOFT:
-          if ( request->wIndex == 7 )
-          {
-            // Get Microsoft OS 2.0 compatible descriptor
-            uint16_t total_len;
-            memcpy(&total_len, desc_ms_os_20+8, 2);
+                case VENDOR_REQUEST_MICROSOFT:
+                    if ( request->wIndex == 7 ) {
+                        // Get Microsoft OS 2.0 compatible descriptor
+                        uint16_t total_len;
+                        memcpy(&total_len, desc_ms_os_20+8, 2);
+                        return tud_control_xfer(rhport, request, (void*)(uintptr_t) desc_ms_os_20, total_len);
+                    } else {
+                        return false;
+                    }
 
-            return tud_control_xfer(rhport, request, (void*)(uintptr_t) desc_ms_os_20, total_len);
-          }else
-          {
-            return false;
-          }
+                default:
+                    break;
+            }
+            break;
 
-        default: break;
-      }
-    break;
+        case TUSB_REQ_TYPE_CLASS:
+            if (request->bRequest == 0x22) {
+                // Webserial simulate the CDC_REQUEST_SET_CONTROL_LINE_STATE (0x22) to connect and disconnect.
+                web_serial_connected = (request->wValue != 0);
 
-    case TUSB_REQ_TYPE_CLASS:
-      if (request->bRequest == 0x22)
-      {
-        // Webserial simulate the CDC_REQUEST_SET_CONTROL_LINE_STATE (0x22) to connect and disconnect.
-        web_serial_connected = (request->wValue != 0);
+                // Always lit LED if connected
+                if ( web_serial_connected ) {
+                    board_led_write(true);
+                    xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_ALWAYS_ON), 0);
+                    tud_vendor_write_str("\r\nWebUSB interface connected\r\n");
+                    tud_vendor_write_flush();
+                } else {
+                    xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_MOUNTED), 0);
+                }
 
-        // Always lit LED if connected
-        if ( web_serial_connected )
-        {
-          board_led_write(true);
-          blink_interval_ms = BLINK_ALWAYS_ON;
+                // response with status OK
+                return tud_control_status(rhport, request);
+            }
+            break;
 
-          tud_vendor_write_str("\r\nWebUSB interface connected\r\n");
-          tud_vendor_write_flush();
-        }else
-        {
-          blink_interval_ms = BLINK_MOUNTED;
-        }
+        default:
+            break;
+    }
 
-        // response with status OK
-        return tud_control_status(rhport, request);
-      }
-    break;
-
-    default: break;
-  }
-
-  // stall unknown request
-  return false;
+    // stall unknown request
+    return false;
 }
+
 
 void webserial_task(void)
 {
-  if ( web_serial_connected )
-  {
-    if ( tud_vendor_available() )
-    {
-      uint8_t buf[64];
-      uint32_t count = tud_vendor_read(buf, sizeof(buf));
+    if (web_serial_connected) {
+        if (tud_vendor_available()) {
+            uint8_t buf[64];
+            uint32_t count = tud_vendor_read(buf, sizeof(buf));
 
-      // echo back to both web serial and cdc
-      echo_all(buf, count);
+            if(count) {
+                // echo back to both web serial and cdc
+                echo_all(buf, count);
+            }
+        }
     }
-  }
 }
 
 
@@ -254,51 +254,72 @@ void webserial_task(void)
 //--------------------------------------------------------------------+
 void cdc_task(void)
 {
-  if ( tud_cdc_connected() )
-  {
-    // connected and there are data available
-    if ( tud_cdc_available() )
-    {
-      uint8_t buf[64];
+    // connected() check for DTR bit
+    // Most but not all terminal client set this when making connection
+    if ( tud_cdc_connected() ) {
+        // There are data available
+        while ( tud_cdc_available() ) {
+            uint8_t buf[64];
+            // read and echo back
+            uint32_t count = tud_cdc_read(buf, sizeof(buf));
+            (void) count;
 
-      uint32_t count = tud_cdc_read(buf, sizeof(buf));
-
-      // echo back to both web serial and cdc
-      echo_all(buf, count);
+            // Echo back
+            // Note: Skip echo by commenting out write() and write_flush()
+            // for throughput test e.g
+            //    $ dd if=/dev/zero of=/dev/ttyACM0 count=10000
+            tud_cdc_write(buf, count);
+        }
+        tud_cdc_write_flush();
     }
-  }
 }
+
+
+//--------------------------------------------------------------------+
+// USB Class Device
+//--------------------------------------------------------------------+
+void class_task(void* params)
+{
+    (void) params;
+
+    // RTOS forever loop
+    while ( 1 ) {
+        cdc_task();
+        webserial_task();
+        vTaskDelay(1);
+    }
+}
+
 
 // Invoked when cdc when line state changed e.g connected/disconnected
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
 {
-  (void) itf;
+    (void) itf;
+    (void) rts;
 
-  // connected
-  if ( dtr && rts )
-  {
-    // print initial message when connected
-    tud_cdc_write_str("\r\nTinyUSB WebUSB device example\r\n");
-  }
+    // TODO set some indicator
+    if ( dtr ) {
+        // Terminal connected
+    } else {
+        // Terminal disconnected
+    }
 }
+
 
 // Invoked when CDC interface received data from host
 void tud_cdc_rx_cb(uint8_t itf)
 {
-  (void) itf;
+    (void) itf;
 }
+
 
 //--------------------------------------------------------------------+
 // BLINKING TASK
 //--------------------------------------------------------------------+
-void led_blinking_task(void)
+static void led_blinky_cb(TimerHandle_t xTimer)
 {
-  static uint32_t start_ms = 0;
+  (void) xTimer;
   static bool led_state = false;
-
-  // Blink every interval ms
-  if ( board_millis() - start_ms < blink_interval_ms) return; // not enough time
-  start_ms += blink_interval_ms;
 
   board_led_write(led_state);
   led_state = 1 - led_state; // toggle

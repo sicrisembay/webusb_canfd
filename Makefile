@@ -20,4 +20,7 @@ SRC_C += \
     $(CURDIR)/main/main.c \
     $(CURDIR)/main/usb_descriptors.c \
 
+$(info INC = $(INC))
+$(info SRC_C = $(SRC_C))
+
 include $(TINYUSB_PATH)/examples/rules.mk

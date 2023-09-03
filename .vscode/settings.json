@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "board.h": "c",
+        "tusb_option.h": "c"
+    },
+    "cortex-debug.gdbPath": "/usr/bin/arm-none-eabi-gdb",
+    "cortex-debug.JLinkGDBServerPath": null,
+    "cortex-debug.stutilPath": "/usr/bin/st-util",
+    "makefile.extensionOutputFolder": "./.vscode"
+}
