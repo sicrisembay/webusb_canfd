@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/
+#include "stm32g4xx_hal.h"
 #include "stm32g4xx_it.h"
 #include "tusb.h"
 /* Private includes ----------------------------------------------------------*/
@@ -177,4 +178,11 @@ void USBWakeUp_IRQHandler(void) {
 // USB PD
 void UCPD1_IRQHandler(void) {
     tuc_int_handler(0);
+}
+
+// CAN-FD
+extern FDCAN_HandleTypeDef hfdcan1;
+void FDCAN1_IT0_IRQHandler(void)
+{
+    HAL_FDCAN_IRQHandler(&hfdcan1);
 }
