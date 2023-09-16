@@ -26,8 +26,8 @@
  */
 // Size in bytes
 #define SZ_TAG_SOF                      (1)
-#define SZ_LENGTH                       (4)
-#define SZ_PKT_SEQ                      (4)
+#define SZ_LENGTH                       (2)
+#define SZ_PKT_SEQ                      (2)
 #define SZ_CHECKSUM                     (1)
 #define SZ_FRAME_OVERHEAD               (SZ_TAG_SOF + SZ_LENGTH + SZ_PKT_SEQ + SZ_CHECKSUM)
 
@@ -38,11 +38,6 @@
 #define OFFSET_PAYLOAD                  (OFFSET_PKT_SEQ + SZ_PKT_SEQ)
 
 #define TAG_SOF                         (0xFF)  //!< Value used as Start of frame
-
-
-#define FRAME_RX_OVERHEAD               (7)  /* 7 bytes */
-#define FRAME_RX_PAYLOAD_CMD_OFFSET     (5)
-#define FRAME_RX_PAYLOAD_PARAM_OFFSET   (6)
 
 static bool bInit = false;
 static uint32_t rdPtr = 0;
@@ -105,22 +100,31 @@ void frame_parser_init(frame_valid_cb_t * pCallbackDef)
 }
 
 
-void frame_parser_receive(uint8_t *pBuf, uint32_t len)
+bool frame_parser_receive(uint8_t *pBuf, uint32_t len)
 {
     uint32_t i = 0;
+    bool ret = true;
 
     if(!bInit) {
-        return;
+        return false;
     }
 
     xSemaphoreTakeRecursive(xParserMutex, portMAX_DELAY);
 
     for(i = 0; i < len; i++) {
-        rxFrameBuffer[wrPtr] = pBuf[i];
-        wrPtr = (wrPtr + 1) % CONFIG_PARSER_RX_BUF_SIZE;
+        uint32_t next = (wrPtr + 1) % CONFIG_PARSER_RX_BUF_SIZE;
+        if(next == rdPtr) {
+            /* buffer full */
+            ret = false;
+            break;
+        } else {
+            rxFrameBuffer[wrPtr] = pBuf[i];
+            wrPtr = next;
+        }
     }
 
     xSemaphoreGiveRecursive(xParserMutex);
+    return (ret);
 }
 
 
@@ -159,9 +163,7 @@ void frame_parser_process(void)
         // See if the packet size byte is valid.  A command packet must be at
         // least four bytes and can not be larger than the receive buffer size.
         length = (uint32_t)(rxFrameBuffer[(rdPtr+1)%CONFIG_PARSER_RX_BUF_SIZE]) +
-                ((uint32_t)(rxFrameBuffer[(rdPtr+2)%CONFIG_PARSER_RX_BUF_SIZE]) << 8) +
-                ((uint32_t)(rxFrameBuffer[(rdPtr+3)%CONFIG_PARSER_RX_BUF_SIZE]) << 16) +
-                ((uint32_t)(rxFrameBuffer[(rdPtr+4)%CONFIG_PARSER_RX_BUF_SIZE]) << 24);
+                ((uint32_t)(rxFrameBuffer[(rdPtr+2)%CONFIG_PARSER_RX_BUF_SIZE]) << 8);
 
         if((length < SZ_FRAME_OVERHEAD) || (length > (CONFIG_PARSER_RX_BUF_SIZE-1)))
         {

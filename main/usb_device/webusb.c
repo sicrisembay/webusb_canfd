@@ -17,7 +17,7 @@
 
 #define USB_DEVICE_STACK_SIZE       (384)
 #define USB_CLASS_STACK_SIZE        (256)
-#define URL  "example.tinyusb.org/webusb-serial/index.html"
+#define URL  "sicrisembay.github.io/webusb_canfd/"
 
 /*
  * Blink pattern
@@ -59,7 +59,6 @@ const tusb_desc_webusb_url_t desc_url = {
 static void usb_device_task(void * pxParam);
 static void usb_class_task(void * pxParam);
 static void led_blinky_cb(TimerHandle_t xTimer);
-static void echo_all(uint8_t buf[], uint32_t count);
 
 void webusb_init(void)
 {
@@ -97,6 +96,29 @@ void webusb_init(void)
     }
 }
 
+
+void webusb_set_connect_state(bool isConnected)
+{
+    webusb_connected = isConnected;
+    const char * pConnectString = "WebUSB interface connected\r\n";
+    const char * pDisconnectString = "WebUSB interface disconnected\r\n";
+
+    // Always lit LED if connected
+    if ( webusb_connected ) {
+        board_led_write(true);
+        xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_ALWAYS_ON), 0);
+        if (tud_cdc_connected()) {
+            tud_cdc_write_str(pConnectString);
+            tud_cdc_write_flush();
+        }
+    } else {
+        xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_MOUNTED), 0);
+        if (tud_cdc_connected()) {
+            tud_cdc_write_str(pDisconnectString);
+            tud_cdc_write_flush();
+        }
+    }
+}
 
 //--------------------------------------------------------------------+
 // USB Device Task
@@ -175,15 +197,8 @@ static void cdc_stack(void)
             uint8_t buf[64];
             // read and echo back
             uint32_t count = tud_cdc_read(buf, sizeof(buf));
-            (void) count;
-
-            // Echo back
-            // Note: Skip echo by commenting out write() and write_flush()
-            // for throughput test e.g
-            //    $ dd if=/dev/zero of=/dev/ttyACM0 count=10000
-            tud_cdc_write(buf, count);
+            /// TODO: implement CLI
         }
-        tud_cdc_write_flush();
     }
 }
 
@@ -218,19 +233,14 @@ void tud_cdc_rx_cb(uint8_t itf)
 //--------------------------------------------------------------------+
 void webusb_stack(void)
 {
-    if (webusb_connected) {
-        if (tud_vendor_available()) {
-            uint8_t buf[64];
-            uint32_t count = tud_vendor_read(buf, sizeof(buf));
+    if (tud_vendor_available()) {
+        uint8_t buf[64];
+        uint32_t count = tud_vendor_read(buf, sizeof(buf));
 
-            if(count) {
-                /* push the receive data to frame parser */
-                frame_parser_receive(buf, count);
-                frame_parser_process();
-
-                // echo back to both web serial and cdc
-                echo_all(buf, count);
-            }
+        if(count) {
+            /* push the receive data to frame parser */
+            frame_parser_receive(buf, count);
+            frame_parser_process();
         }
     }
 }
@@ -272,19 +282,6 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
 
         case TUSB_REQ_TYPE_CLASS:
             if (request->bRequest == 0x22) {
-                // Webserial simulate the CDC_REQUEST_SET_CONTROL_LINE_STATE (0x22) to connect and disconnect.
-                webusb_connected = (request->wValue != 0);
-
-                // Always lit LED if connected
-                if ( webusb_connected ) {
-                    board_led_write(true);
-                    xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_ALWAYS_ON), 0);
-                    tud_vendor_write_str("\r\nWebUSB interface connected\r\n");
-                    tud_vendor_write_flush();
-                } else {
-                    xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_MOUNTED), 0);
-                }
-
                 // response with status OK
                 return tud_control_status(rhport, request);
             }
@@ -329,7 +326,7 @@ static void led_blinky_cb(TimerHandle_t xTimer)
 static void echo_all(uint8_t buf[], uint32_t count)
 {
     // echo to web serial
-    if ( webusb_connected ) {
+    if (webusb_connected) {
         tud_vendor_write(buf, count);
         tud_vendor_write_flush();
     }

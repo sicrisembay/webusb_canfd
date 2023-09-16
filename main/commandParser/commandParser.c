@@ -8,6 +8,7 @@
 #include "stdbool.h"
 #include "commandParser.h"
 #include "frameParser/frameParser.h"
+#include "usb_device/webusb.h"
 
 /*
  * Command Format
@@ -18,9 +19,13 @@
 #define OFFSET_COMMAND_ID               (0x00)
 
 
-/* COMMAND: 0x10 *************************************************************/
-#define COMMAND_UPDATE_COLOR            (0x10)
-#define SZ_CMD_UPDATE_COLOR             (6)
+/* COMMAND: 0x01 *************************************************************/
+#define COMMAND_CONNECT                 (0x01)
+#define SZ_CMD_CONNECT                  (1 + 1)  // 1byte command + 1byte parameter
+/* Param0
+ *  0x01: Connect
+ *  0x02: Disconnect
+ */
 
 
 typedef struct __attribute__ ((packed)) {
@@ -60,10 +65,9 @@ void command_parser_init(void)
 static int32_t commandHandler(uint32_t length)
 {
     switch(commandBuffer.commandId) {
-        case COMMAND_UPDATE_COLOR: {
-            if(SZ_CMD_UPDATE_COLOR == length) {
-//                ws2812b_write_color(commandBuffer.command_update_color.led_id,
-//                        commandBuffer.command_update_color.color);
+        case COMMAND_CONNECT: {
+            if(SZ_CMD_CONNECT == length) {
+                webusb_set_connect_state(commandBuffer.param.raw[0] == 0x01);
             }
             break;
         }
