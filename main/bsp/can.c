@@ -7,21 +7,91 @@
 #include "board_api.h"
 #include "can.h"
 #include "main.h"
+#include "usb_device/frameParser/frameParser.h"
+#include "commandParser/commandParser.h"
 
-#define CAN_TEST            (1)
-#define CAN_STACK_SIZE      (256)
+#define CAN_TX_BIT          (0x01)
+#define CAN_RX_BIT          (0x02)
+
+#define CAN_STACK_SIZE          (256)
 
 FDCAN_HandleTypeDef hfdcan1;
 static TaskHandle_t canTask = NULL;
 static StackType_t can_stack[CAN_STACK_SIZE];
 static StaticTask_t can_taskdef;
+static ARBIT_BITRATE_T arbit_bps = ARBIT_1MHZ;
+static DATA_BITRATE_T data_bps = DATA_1MHZ;
+static bool txInProgress = false;
 
-#if (CAN_TEST == 1) /* TEST */
-FDCAN_RxHeaderTypeDef RxHeader;
-uint8_t RxData[8];
-FDCAN_TxHeaderTypeDef TxHeader;
-uint8_t TxData[8];
-#endif /* CAN_TEST */
+typedef struct {
+    FDCAN_RxHeaderTypeDef header;
+    uint8_t data[64];
+} rx_queue_element_t;
+
+typedef struct {
+    uint32_t prescaler;
+    uint32_t sjw;
+    uint32_t tseg1;
+    uint32_t tseg2;
+} timing_config_t;
+
+
+#define CAN_TX_QUEUE_LENGTH     (5)
+#define CAN_TX_ELEMENT_SZ       sizeof(tx_queue_element_t)
+static StaticQueue_t canTxStaticQueue;
+uint8_t canTxQueueStorageArea[CAN_TX_QUEUE_LENGTH * CAN_TX_ELEMENT_SZ];
+static QueueHandle_t canTxQHandle;
+
+#define CAN_RX_QUEUE_LENGTH     (5)
+#define CAN_RX_ELEMENT_SZ       sizeof(rx_queue_element_t)
+static StaticQueue_t canRxStaticQueue;
+uint8_t canRxQueueStorageArea[CAN_RX_QUEUE_LENGTH * CAN_RX_ELEMENT_SZ];
+static QueueHandle_t canRxQHandle;
+
+/*
+ * NOTE:
+ *   Peripheral Clock is 84MHz (168MHz with prescaler of DIV2)
+ *   Clock tolerance value is assumed 4687.5ppm (review datasheet)
+ *   Node delay is 180ns (review transceiver worst delay)
+ *
+ *   Sampling Point is 85.71%
+ *
+ */
+static timing_config_t const DEFAULT_ARBITRATION_TIMING[N_SUPPORTED_ARBIT_BITRATE] = {
+    {
+        /* ARBIT_500KHZ */
+        .prescaler = 1,
+        .sjw = 24,
+        .tseg1 = 143,
+        .tseg2 = 24
+    },
+    {
+        /* ARBIT_1MHZ */
+        .prescaler = 1,
+        .sjw = 12,
+        .tseg1 = 71,
+        .tseg2 = 12
+    },
+};
+
+static timing_config_t const DEFAULT_DATA_TIMING[N_SUPPORTED_DATA_BITRATE] = {
+    {
+        /* DATA_500KHZ */
+        .prescaler = 6,
+        .sjw = 4,
+        .tseg1 = 23,
+        .tseg2 = 4
+    },
+    {
+        /* DATA_1MHZ */
+        .prescaler = 3,
+        .sjw = 4,
+        .tseg1 = 23,
+        .tseg2 = 4
+    },
+};
+
+static const uint8_t DLCtoBytes[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64};
 
 static void can_task(void * pxParam);
 
@@ -58,6 +128,20 @@ void HAL_FDCAN_MspInit(FDCAN_HandleTypeDef* hfdcan)
 
 void CAN_init(void)
 {
+    canTxQHandle = xQueueCreateStatic(
+                                CAN_TX_QUEUE_LENGTH,
+                                CAN_TX_ELEMENT_SZ,
+                                canTxQueueStorageArea,
+                                &canTxStaticQueue);
+    ASSERT_ME(canTxQHandle != NULL);
+
+    canRxQHandle = xQueueCreateStatic(
+                                CAN_RX_QUEUE_LENGTH,
+                                CAN_RX_ELEMENT_SZ,
+                                canRxQueueStorageArea,
+                                &canRxStaticQueue);
+    ASSERT_ME(canRxQHandle != NULL);
+
     hfdcan1.Instance = FDCAN1;
     hfdcan1.Init.ClockDivider = FDCAN_CLOCK_DIV2;
     hfdcan1.Init.FrameFormat = FDCAN_FRAME_FD_NO_BRS;
@@ -65,14 +149,14 @@ void CAN_init(void)
     hfdcan1.Init.AutoRetransmission = DISABLE;
     hfdcan1.Init.TransmitPause = DISABLE;
     hfdcan1.Init.ProtocolException = DISABLE;
-    hfdcan1.Init.NominalPrescaler = 1;
-    hfdcan1.Init.NominalSyncJumpWidth = 12;
-    hfdcan1.Init.NominalTimeSeg1 = 71;
-    hfdcan1.Init.NominalTimeSeg2 = 12;
-    hfdcan1.Init.DataPrescaler = 3;
-    hfdcan1.Init.DataSyncJumpWidth = 4;
-    hfdcan1.Init.DataTimeSeg1 = 23;
-    hfdcan1.Init.DataTimeSeg2 = 4;
+    hfdcan1.Init.NominalPrescaler = DEFAULT_ARBITRATION_TIMING[arbit_bps].prescaler;
+    hfdcan1.Init.NominalSyncJumpWidth = DEFAULT_ARBITRATION_TIMING[arbit_bps].sjw;
+    hfdcan1.Init.NominalTimeSeg1 = DEFAULT_ARBITRATION_TIMING[arbit_bps].tseg1;
+    hfdcan1.Init.NominalTimeSeg2 = DEFAULT_ARBITRATION_TIMING[arbit_bps].tseg2;
+    hfdcan1.Init.DataPrescaler = DEFAULT_DATA_TIMING[data_bps].prescaler;
+    hfdcan1.Init.DataSyncJumpWidth = DEFAULT_DATA_TIMING[data_bps].sjw;
+    hfdcan1.Init.DataTimeSeg1 = DEFAULT_DATA_TIMING[data_bps].tseg1;
+    hfdcan1.Init.DataTimeSeg2 = DEFAULT_DATA_TIMING[data_bps].tseg2;
     hfdcan1.Init.StdFiltersNbr = 0;
     hfdcan1.Init.ExtFiltersNbr = 0;
     hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
@@ -92,40 +176,188 @@ void CAN_init(void)
 
 static void can_task(void * pxParam)
 {
-    uint8_t txTestData = 0;
+    rx_queue_element_t rxElement;
+    tx_queue_element_t txElement;
+    uint32_t notifyValue = 0;
+    uint8_t canDeviceToHost[CFG_TUD_VENDOR_EPSIZE];
+    uint16_t packetSequence = 0;
+    txInProgress = false;
 
-    TxHeader.Identifier = 0x321;
-    TxHeader.IdType = FDCAN_STANDARD_ID;
-    TxHeader.TxFrameType = FDCAN_DATA_FRAME;
-    TxHeader.DataLength = FDCAN_DLC_BYTES_8;
-    TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-    TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
-    TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
-    TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-    TxHeader.MessageMarker = 0;
+    while(1) {
+        if(pdPASS == xTaskNotifyWait(
+                        pdFALSE,
+                        UINT32_MAX,
+                        &notifyValue,
+                        portMAX_DELAY)) {
+            if((notifyValue & CAN_TX_BIT) != 0) {
+                if(pdTRUE == xQueueReceive(canTxQHandle, &txElement, 0)) {
+                    if(HAL_OK == HAL_FDCAN_AddMessageToTxFifoQ(
+                            &hfdcan1,
+                            &(txElement.header),
+                            &(txElement.data[0]))) {
+                        txInProgress = true;
+                    }
+                } else {
+                    txInProgress = false;
+                }
+            }
+            if((notifyValue & CAN_RX_BIT) != 0) {
+                if(pdTRUE == xQueueReceive(canRxQHandle, &rxElement, 0)) {
+                    uint8_t checksum = 0;
+                    uint32_t idx = 0;
+                    bool multiplePacket = false;
+                    const uint8_t dlc = DLCtoBytes[(uint8_t)((rxElement.header.DataLength >> 16) & 0x0F)];
+                    const uint8_t maxpayload = CFG_TUD_VENDOR_EPSIZE - SZ_USB_BYTES_IN_PACKET - SZ_FRAME_OVERHEAD - SZ_COMMAND_OVERHEAD;
+                    //const uint8_t frameSize = SZ_FRAME_OVERHEAD + SZ_COMMAND_OVERHEAD + dlc;
+                    uint8_t frameSize = 0;
+                    if(dlc > maxpayload) {
+                        /* Exceeds the Endpoint Size */
+                        multiplePacket = true;
+                        frameSize = CFG_TUD_VENDOR_EPSIZE - 1;
+                    } else {
+                        multiplePacket = false;
+                        frameSize = SZ_FRAME_OVERHEAD + SZ_COMMAND_OVERHEAD + dlc;
+                    }
 
-    ASSERT_ME(HAL_FDCAN_Start(&hfdcan1) == HAL_OK);
-    ASSERT_ME(HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) == HAL_OK);
+                    /*
+                     * First Packet
+                     */
+                    memset(canDeviceToHost, 0, sizeof(canDeviceToHost));
+                    // Frame Prefix -->
+                    canDeviceToHost[OFFSET_USB_BYTES_IN_PACKET] = frameSize;
+                    canDeviceToHost[OFFSET_TAG_SOF] = TAG_SOF;
+                    canDeviceToHost[OFFSET_LENGTH] = (uint8_t)(frameSize & 0xFF);
+                    canDeviceToHost[OFFSET_LENGTH + 1] = (uint8_t)(((frameSize) >> 8) & 0xFF);
+                    canDeviceToHost[OFFSET_PKT_SEQ] = (uint8_t)(packetSequence & 0xFF);
+                    canDeviceToHost[OFFSET_PKT_SEQ + 1] = (uint8_t)((packetSequence >> 8) & 0xFF);
+                    packetSequence++;
+                    // <-- Frame Prefix
+                    // Payload -->
+                    canDeviceToHost[OFFSET_PAYLOAD + OFFSET_COMMAND_ID] = COMMAND_DEVICE_TO_HOST;
+                    canDeviceToHost[OFFSET_PAYLOAD + OFFSET_MSGID] =
+                            (uint8_t)(rxElement.header.Identifier & 0xFF);
+                    canDeviceToHost[OFFSET_PAYLOAD + OFFSET_MSGID + 1] =
+                            (uint8_t)((rxElement.header.Identifier >> 8) & 0xFF);
+                    canDeviceToHost[OFFSET_PAYLOAD + OFFSET_DLC] = dlc;
+                    for(idx = 0; idx < (multiplePacket ? maxpayload : dlc); idx++) {
+                        canDeviceToHost[OFFSET_PAYLOAD + OFFSET_DATA + idx] =
+                                rxElement.data[idx];
+                    }
+                    // <-- Payload
+                    checksum = 0;
+                    for(idx = OFFSET_TAG_SOF; idx < (frameSize - 1); idx++) {
+                        checksum += canDeviceToHost[idx];
+                    }
+                    canDeviceToHost[frameSize] = (uint8_t)((~checksum) + 1);
+
+                    // Send to USB
+                    tud_vendor_write(&canDeviceToHost[0], CFG_TUD_VENDOR_EPSIZE);
+
+                    if(multiplePacket) {
+                        /*
+                         * Second Packet
+                         */
+                        tud_vendor_flush();
+                        /// TODO
+                    }
+
+                }
+            }
+        }
+    }
+}
+
+/*
+ * NOTE: This called from the interrupt
+ */
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
+{
+    rx_queue_element_t rxElement = {0};
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    if((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != RESET) {
+        /* Retrieve Rx messages from RX FIFO0 */
+        if(HAL_OK == HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &(rxElement.header), &(rxElement.data[0]))) {
+            xQueueSendFromISR(canRxQHandle, &rxElement, &xHigherPriorityTaskWoken);
+            xTaskNotifyFromISR(canTask, CAN_RX_BIT, eSetBits, &xHigherPriorityTaskWoken);
+        }
+    }
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+/*
+ * NOTE: This called from the interrupt
+ */
+void HAL_FDCAN_TxFifoEmptyCallback(FDCAN_HandleTypeDef *hfdcan)
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xTaskNotifyFromISR(canTask, CAN_TX_BIT, eSetBits, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+
+bool CAN_configure(ARBIT_BITRATE_T arb_bps, DATA_BITRATE_T dat_bps)
+{
+    if(HAL_FDCAN_GetState(&hfdcan1) != HAL_FDCAN_STATE_READY) {
+        return false;
+    }
+
+    hfdcan1.Init.NominalPrescaler = DEFAULT_ARBITRATION_TIMING[arb_bps].prescaler;
+    hfdcan1.Init.NominalSyncJumpWidth = DEFAULT_ARBITRATION_TIMING[arb_bps].sjw;
+    hfdcan1.Init.NominalTimeSeg1 = DEFAULT_ARBITRATION_TIMING[arb_bps].tseg1;
+    hfdcan1.Init.NominalTimeSeg2 = DEFAULT_ARBITRATION_TIMING[arb_bps].tseg2;
+    hfdcan1.Init.DataPrescaler = DEFAULT_DATA_TIMING[dat_bps].prescaler;
+    hfdcan1.Init.DataSyncJumpWidth = DEFAULT_DATA_TIMING[dat_bps].sjw;
+    hfdcan1.Init.DataTimeSeg1 = DEFAULT_DATA_TIMING[dat_bps].tseg1;
+    hfdcan1.Init.DataTimeSeg2 = DEFAULT_DATA_TIMING[dat_bps].tseg2;
+    if(HAL_FDCAN_Init(&hfdcan1) != HAL_OK) {
+        return false;
+    }
+    arbit_bps = arb_bps;
+    data_bps = dat_bps;
+
+    return true;
+}
+
+bool CAN_start(void)
+{
+    if(HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
+        return false;
+    }
+
+    if(HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE | FDCAN_IT_TX_FIFO_EMPTY, FDCAN_TX_BUFFER0) != HAL_OK) {
+        return false;
+    }
 
     NVIC_EnableIRQ(FDCAN1_IT0_IRQn);
 
-    while(1) {
-        vTaskDelay(5000);
-#if (CAN_TEST)
-        for(int i = 0; i < 8; i++) {
-            TxData[i] = txTestData++;
-        }
-        ASSERT_ME(HAL_OK == HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData));
-#endif
-    }
+    return true;
 }
 
-void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
+bool CAN_stop(void)
 {
-    if((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != RESET) {
-        /* Retrieve Rx messages from RX FIFO0 */
-#if (CAN_TEST)
-        ASSERT_ME(HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK);
-#endif
+    NVIC_DisableIRQ(FDCAN1_IT0_IRQn);
+
+    if(HAL_FDCAN_DeactivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != HAL_OK) {
+        return false;
     }
+
+    if(HAL_FDCAN_Stop(&hfdcan1) != HAL_OK) {
+        return false;
+    }
+
+    return true;
 }
+
+bool CAN_send(tx_queue_element_t * pElem)
+{
+    if(pdTRUE != xQueueSend(canTxQHandle, pElem, 0)) {
+        return false;
+    }
+    if(!txInProgress){
+        xTaskNotify(canTask, CAN_TX_BIT, eSetBits);
+    }
+
+    return true;
+}
+

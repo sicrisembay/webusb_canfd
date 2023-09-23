@@ -16,29 +16,6 @@
 #define CONFIG_PARSER_TX_BUF_SIZE       (512)
 #endif /* CONFIG_PARSER_TX_BUF_SIZE */
 
-/*
- * Frame Format
- *   TAG        : 1 byte
- *   Length     : 4 bytes
- *   Packet Seq : 4 bytes
- *   Payload    : N Bytes
- *   Checksum   : 1 byte
- */
-// Size in bytes
-#define SZ_TAG_SOF                      (1)
-#define SZ_LENGTH                       (2)
-#define SZ_PKT_SEQ                      (2)
-#define SZ_CHECKSUM                     (1)
-#define SZ_FRAME_OVERHEAD               (SZ_TAG_SOF + SZ_LENGTH + SZ_PKT_SEQ + SZ_CHECKSUM)
-
-// Offset
-#define OFFSET_TAG_SOF                  (0)
-#define OFFSET_LENGTH                   (SZ_TAG_SOF)
-#define OFFSET_PKT_SEQ                  (OFFSET_LENGTH + SZ_LENGTH)
-#define OFFSET_PAYLOAD                  (OFFSET_PKT_SEQ + SZ_PKT_SEQ)
-
-#define TAG_SOF                         (0xFF)  //!< Value used as Start of frame
-
 static bool bInit = false;
 static uint32_t rdPtr = 0;
 static uint32_t wrPtr = 0;
@@ -206,44 +183,6 @@ void frame_parser_process(void)
         // Done with processing this command packet.
         rdPtr = (rdPtr + length) % CONFIG_PARSER_RX_BUF_SIZE;
     }
-
-    xSemaphoreGiveRecursive(xParserMutex);
-}
-
-
-void frame_parser_format_frame(uint8_t *pBuf, uint32_t len)
-{
-    uint32_t i;
-    uint8_t sum = 0;
-
-    xSemaphoreTakeRecursive(xParserMutex, portMAX_DELAY);
-
-    /*
-     * Start of Frame
-     */
-    pBuf[OFFSET_TAG_SOF] = TAG_SOF;
-    /*
-     * Set Length
-     */
-    for(i = 0; i < SZ_LENGTH; i++) {
-        pBuf[OFFSET_LENGTH+i] = (uint8_t)((len >> (8*i)) & 0xFF);
-    }
-
-    /*
-     * Set Packet Sequence
-     */
-    for(i = 0; i < SZ_PKT_SEQ; i++) {
-        pBuf[OFFSET_PKT_SEQ + i] = (uint8_t)((packetSeq >> (8*i)) & 0xFF);
-    }
-    packetSeq++;
-
-    /*
-     * Calculate Checksum
-     */
-    for(i = 0; i < (len-1); i++) {
-        sum += pBuf[i];
-    }
-    pBuf[i] = (uint8_t)((~sum) + 1);
 
     xSemaphoreGiveRecursive(xParserMutex);
 }

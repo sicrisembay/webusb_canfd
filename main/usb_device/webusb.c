@@ -19,6 +19,9 @@
 #define USB_CLASS_STACK_SIZE        (256)
 #define URL  "sicrisembay.github.io/webusb_canfd/"
 
+#define EVENT_CDC_AVAILABLE_BIT     (0x00000001)
+#define EVENT_VENDOR_AVAILABLE_BIT  (0x00000002)
+
 /*
  * Blink pattern
  * - 250 ms  : device not mounted
@@ -140,7 +143,16 @@ static void usb_device_task(void * pxParam)
         // put this thread to waiting state until there is new events
         tud_task();
 
-        // following code only run if tud_task() process at least 1 event
+        if (tud_vendor_available()) {
+            // Set event bit to process vendor task
+            xTaskNotify(classTask, EVENT_VENDOR_AVAILABLE_BIT, eSetBits);
+        }
+        tud_vendor_write_flush();
+
+        if(tud_cdc_available()) {
+            // Set event bit to process cdc task
+            xTaskNotify(classTask, EVENT_CDC_AVAILABLE_BIT, eSetBits);
+        }
         tud_cdc_write_flush();
     }
 }
@@ -185,25 +197,6 @@ void tud_resume_cb(void)
 
 
 //--------------------------------------------------------------------+
-// USB CDC
-//--------------------------------------------------------------------+
-static void cdc_stack(void)
-{
-    // connected() check for DTR bit
-    // Most but not all terminal client set this when making connection
-    if ( tud_cdc_connected() ) {
-        // There are data available
-        while ( tud_cdc_available() ) {
-            uint8_t buf[64];
-            // read and echo back
-            uint32_t count = tud_cdc_read(buf, sizeof(buf));
-            /// TODO: implement CLI
-        }
-    }
-}
-
-
-//--------------------------------------------------------------------+
 // USB CDC Callbacks
 //--------------------------------------------------------------------+
 // Invoked when cdc when line state changed e.g connected/disconnected
@@ -225,24 +218,6 @@ void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
 void tud_cdc_rx_cb(uint8_t itf)
 {
     (void) itf;
-}
-
-
-//--------------------------------------------------------------------+
-// USB Vendor Class (WebUSB)
-//--------------------------------------------------------------------+
-void webusb_stack(void)
-{
-    if (tud_vendor_available()) {
-        uint8_t buf[64];
-        uint32_t count = tud_vendor_read(buf, sizeof(buf));
-
-        if(count) {
-            /* push the receive data to frame parser */
-            frame_parser_receive(buf, count);
-            frame_parser_process();
-        }
-    }
 }
 
 
@@ -304,10 +279,27 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
 static void usb_class_task(void * pxParam)
 {
     (void)pxParam;
+    uint32_t event = 0;
+    uint8_t buf[64];
+
     while(1) {
-        cdc_stack();
-        webusb_stack();
-        vTaskDelay(1);
+        if(pdTRUE == xTaskNotifyWait(0, 0xFFFFFFFF, &event, portMAX_DELAY)) {
+            if((event & EVENT_CDC_AVAILABLE_BIT) != 0) {
+                while (tud_cdc_available()) {
+                    // read and echo back
+                    uint32_t count = tud_cdc_read(buf, sizeof(buf));
+                    /// TODO: implement CLI
+                }
+            }
+            if((event & EVENT_VENDOR_AVAILABLE_BIT) != 0) {
+                uint32_t count = tud_vendor_read(buf, sizeof(buf));
+                if(count > 1) {
+                    /* push the receive data to frame parser */
+                    frame_parser_receive(&buf[1], buf[0]);
+                    frame_parser_process();
+                }
+            }
+        }
     }
 }
 
@@ -321,25 +313,3 @@ static void led_blinky_cb(TimerHandle_t xTimer)
     led_state = !led_state;
 }
 
-
-// send characters to both CDC and WebUSB
-static void echo_all(uint8_t buf[], uint32_t count)
-{
-    // echo to web serial
-    if (webusb_connected) {
-        tud_vendor_write(buf, count);
-        tud_vendor_write_flush();
-    }
-
-    // echo to cdc
-    if ( tud_cdc_connected() ) {
-        for(uint32_t i=0; i<count; i++) {
-            tud_cdc_write_char(buf[i]);
-
-            if ( buf[i] == '\r' ) {
-                tud_cdc_write_char('\n');
-            }
-        }
-        tud_cdc_write_flush();
-    }
-}
