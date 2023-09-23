@@ -1,6 +1,5 @@
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
+import 'package:isolate_manager/isolate_manager.dart';
 import 'package:usb_device/usb_device.dart';
 import 'command_frame.dart';
 
@@ -10,19 +9,47 @@ const int kConfiguration = 1;
 const int kInterface = 2;
 const int kEndpoint = 3;
 
+final UsbDevice _usbDevice = UsbDevice();
+
+@pragma('vm:entry-point')
+void isolateReceiveUSB(dynamic params) {
+  final channel = IsolateManagerController(params);
+  channel.onIsolateMessage.listen((message) async {
+    // Do more stuff here
+
+    await Future.delayed(const Duration(seconds: 1));
+    print('test from isolateReceiveUSB.');
+    print(message);
+    // final result = await fibonacciFuture(message);
+    // Magic code: This is only for non-blocking UI on Web platform
+    await Future.delayed(Duration.zero);
+
+    // Send the result to your [onMessage] stream
+    channel.sendResult('done');
+  });
+}
+
 class WebUsbDevice {
-  final UsbDevice _usbDevice = UsbDevice();
+  final isolateManager =
+      IsolateManager.createOwnIsolate(isDebug: true, isolateReceiveUSB);
   late dynamic _pairedDevice;
   bool _isSupported = false;
   bool _isConnected = false;
 
-  WebUsbDevice() {}
+  WebUsbDevice() {
+    isolateManager.start();
+    isolateManager.stream.listen((message) => print(message));
+  }
 
   bool isConnected() {
     return _isConnected;
   }
 
   Future<void> getDevices() async {}
+
+  Future<void> dispose() async {
+    await isolateManager.stop();
+  }
 
   Future<void> connect() async {
     _isSupported = await _usbDevice.isSupported();
@@ -39,6 +66,7 @@ class WebUsbDevice {
           _pairedDevice, kEndpoint, connectPacket.buffer);
       if (usbOutTransferResult.status == StatusResponse.ok) {
         _isConnected = true;
+        await isolateManager.sendMessage('test-message');
       }
     }
   }
@@ -107,68 +135,3 @@ class WebUsbDevice {
     return (inTransferResult.data.toString());
   }
 }
-
-
-    // usbDevice = UsbDevice();
-    // pairedDevice = null;
-
-                //   print('I am pressed');
-                //   isSupported = await usbDevice!.isSupported();
-                //   print('Web USB supported: ' + isSupported.toString());
-                //   pairedDevice = await usbDevice!.requestDevices(
-                //       [DeviceFilter(vendorId: 0xCAFE, productId: 0x4011)]);
-                //   USBDeviceInfo devInfo =
-                //       await usbDevice!.getPairedDeviceInfo(pairedDevice);
-                //   print('Product: ' + devInfo.productName);
-                //   print('Manufacturer: ' + devInfo.manufacturerName);
-                //   print('Version: ' +
-                //       devInfo.deviceVersionMajor.toString() +
-                //       '.' +
-                //       devInfo.deviceVersionMinor.toString() +
-                //       '.' +
-                //       devInfo.deviceVersionSubMinor.toString());
-                //   List<USBConfiguration> availableConfigurations =
-                //       await usbDevice!.getAvailableConfigurations(pairedDevice);
-                //   print('USB Configurations: ' +
-                //       availableConfigurations.length.toString());
-                //   int i = 0;
-                //   while (i < availableConfigurations.length) {
-                //     print('Configuration:' + i.toString());
-                //     print(availableConfigurations[i]);
-                //     i++;
-                //   }
-                //   var utf8encoder = Utf8Encoder();
-                //   var list = utf8encoder.convert('Hello World.\r\n');
-
-                //   await usbDevice!.open(pairedDevice);
-                //   await usbDevice!.selectConfiguration(pairedDevice, 1);
-                //   await usbDevice!.claimInterface(pairedDevice, 2);
-                //   print('Transfer Result: ' +
-                //       usbOutTransferResult.bytesWritten.toString() +
-                //       ' written');
-                //   print(usbOutTransferResult.status.toString());
-                //   while (true) {
-                //     USBInTransferResult usbInTransferResult =
-                //         await usbDevice!.transferIn(pairedDevice, 3, 64);
-                //     if (usbInTransferResult.status ==
-                //         StatusResponse.empty_data) {
-                //       break;
-                //     }
-                //     print(Utf8Decoder().convert(usbInTransferResult.data));
-                //   }
-
-                  // try {
-                  //   if (pairedDevice != null) {
-                  //     var list =
-                  //         const Utf8Encoder().convert('Goodbye World.\r\n');
-                  //     USBOutTransferResult usbOutTransferResult =
-                  //         await usbDevice!
-                  //             .transferOut(pairedDevice, 3, list.buffer);
-                  //     print(usbOutTransferResult.status);
-                  //     await usbDevice!.releaseInterface(pairedDevice, 2);
-                  //     await usbDevice!.close(pairedDevice);
-                  //     pairedDevice = null;
-                  //   }
-                  // } catch (e) {
-                  //   print(e);
-                  // }
