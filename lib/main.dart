@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:webusb_canfd/components/command_frame.dart';
 import 'package:webusb_canfd/components/webusb.dart';
 
 void main() {
@@ -56,9 +57,9 @@ class _MyHomePageState extends State<MyHomePage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            Expanded(
+            const Expanded(
               flex: 1,
-              child: const Text(
+              child: Text(
                 'Connection Test',
                 style: TextStyle(fontSize: 40.0),
               ),
@@ -106,39 +107,32 @@ class _MyHomePageState extends State<MyHomePage> {
                 flex: 1,
                 child: Column(
                   children: [
-                    const Text('Recieve one packet'),
-                    TextButton(
-                        onPressed: () async {
-                          rxTestPacket =
-                              await webUsbDevice.receiveStandardCAN();
-                          print(rxTestPacket);
-                        },
-                        child: Text('RECEIVE TEXT PACKET')),
+                    const Text('Recieve packet'),
+                    StreamBuilder<CANmessage>(
+                        stream: frameParser.stream,
+                        builder: (context, snapshot) {
+                          String receiveString;
+                          switch (snapshot.connectionState) {
+                            case ConnectionState.active:
+                              {
+                                receiveString = 'msgId: ' +
+                                    snapshot.data!.msgId.toString() +
+                                    ' dlc: ' +
+                                    snapshot.data!.dlc.toString() +
+                                    ' payload: ' +
+                                    snapshot.data!.data.toString();
+                                break;
+                              }
+                            default:
+                              {
+                                receiveString = 'empty';
+                                break;
+                              }
+                          }
+                          return Text(receiveString);
+                        })
                   ],
                 )),
-            // Expanded(
-            //   flex: 10,
-            //   child: Column(children: [
-            //     const Text('CAN received packet'),
-            //     Expanded(
-            //       child: Container(
-            //         padding: EdgeInsets.all(10.0),
-            //         child: CustomScrollView(slivers: [
-            //           SliverList(
-            //             delegate: SliverChildBuilderDelegate(
-            //               // The builder function returns a ListTile with a title that
-            //               // displays the index of the current item.
-            //               (context, index) =>
-            //                   ListTile(title: Text('Item #$index')),
-            //               // Builds 1000 ListTiles
-            //               childCount: 1000,
-            //             ),
-            //           ),
-            //         ]),
-            //       ),
-            //     ),
-            //   ]),
-            // ),
           ],
         ),
       ),
