@@ -8,6 +8,7 @@
 #include "can.h"
 #include "main.h"
 #include "usb_device/frameParser/frameParser.h"
+#include "usb_device/webusb.h"
 #include "commandParser/commandParser.h"
 
 #define CAN_TX_BIT          (0x01)
@@ -36,13 +37,13 @@ typedef struct {
 } timing_config_t;
 
 
-#define CAN_TX_QUEUE_LENGTH     (5)
+#define CAN_TX_QUEUE_LENGTH     (3)
 #define CAN_TX_ELEMENT_SZ       sizeof(tx_queue_element_t)
 static StaticQueue_t canTxStaticQueue;
 uint8_t canTxQueueStorageArea[CAN_TX_QUEUE_LENGTH * CAN_TX_ELEMENT_SZ];
 static QueueHandle_t canTxQHandle;
 
-#define CAN_RX_QUEUE_LENGTH     (5)
+#define CAN_RX_QUEUE_LENGTH     (3)
 #define CAN_RX_ELEMENT_SZ       sizeof(rx_queue_element_t)
 static StaticQueue_t canRxStaticQueue;
 uint8_t canRxQueueStorageArea[CAN_RX_QUEUE_LENGTH * CAN_RX_ELEMENT_SZ];
@@ -245,22 +246,22 @@ static void can_task(void * pxParam)
                     }
                     // <-- Payload
                     checksum = 0;
-                    for(idx = OFFSET_TAG_SOF; idx < (frameSize - 1); idx++) {
-                        checksum += canDeviceToHost[idx];
+                    for(idx = 0; idx < (frameSize - 1); idx++) {
+                        checksum += canDeviceToHost[idx + OFFSET_TAG_SOF];
                     }
                     canDeviceToHost[frameSize] = (uint8_t)((~checksum) + 1);
 
-                    // Send to USB
-                    tud_vendor_write(&canDeviceToHost[0], CFG_TUD_VENDOR_EPSIZE);
-
-                    if(multiplePacket) {
-                        /*
-                         * Second Packet
-                         */
-                        tud_vendor_flush();
-                        /// TODO
+                    // Send to WebUSB queue
+                    if(webusb_sendEp(&canDeviceToHost[0])) {
+                        if(multiplePacket) {
+                            /*
+                             * Second Packet
+                             */
+                            /// TODO
+                        }
+                    } else {
+                        /// TODO: handle error
                     }
-
                 }
             }
         }

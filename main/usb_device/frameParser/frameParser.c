@@ -12,10 +12,6 @@
 #define CONFIG_PARSER_RX_BUF_SIZE       (1024)
 #endif /* CONFIG_PARSER_RX_BUF_SIZE */
 
-#ifndef CONFIG_PARSER_TX_BUF_SIZE
-#define CONFIG_PARSER_TX_BUF_SIZE       (512)
-#endif /* CONFIG_PARSER_TX_BUF_SIZE */
-
 static bool bInit = false;
 static uint32_t rdPtr = 0;
 static uint32_t wrPtr = 0;

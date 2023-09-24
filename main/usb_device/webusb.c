@@ -15,12 +15,18 @@
 #include "usb_descriptors.h"
 #include "bsp/board_api.h"
 
-#define USB_DEVICE_STACK_SIZE       (384)
-#define USB_CLASS_STACK_SIZE        (256)
+#define USB_DEVICE_STACK_SIZE           (384)
+#define USB_CLASS_STACK_SIZE            (256)
 #define URL  "sicrisembay.github.io/webusb_canfd/"
 
-#define EVENT_CDC_AVAILABLE_BIT     (0x00000001)
-#define EVENT_VENDOR_AVAILABLE_BIT  (0x00000002)
+#define EVENT_CDC_AVAILABLE_BIT         (0x00000001)
+#define EVENT_VENDOR_AVAILABLE_BIT      (0x00000002)
+
+#define WEBUSB_TX_QUEUE_LENGTH          (10)
+#define WEBUSB_TX_ELEMENT_SZ            CFG_TUD_VENDOR_TX_BUFSIZE
+static StaticQueue_t webUsbTxStaticQueue;
+uint8_t webUsbTxQueueStorageArea[WEBUSB_TX_QUEUE_LENGTH * WEBUSB_TX_ELEMENT_SZ];
+static QueueHandle_t webUsbTxQHandle;
 
 /*
  * Blink pattern
@@ -92,7 +98,12 @@ void webusb_init(void)
                             usb_class_stack,
                             &usb_class_taskdef
                             );
-
+        webUsbTxQHandle = xQueueCreateStatic(
+                            WEBUSB_TX_QUEUE_LENGTH,
+                            WEBUSB_TX_ELEMENT_SZ,
+                            webUsbTxQueueStorageArea,
+                            &webUsbTxStaticQueue
+                            );
         xTimerStart(blinky_tm, 0);
 
         bInit = true;
@@ -108,6 +119,13 @@ void webusb_set_connect_state(bool isConnected)
 
     // Always lit LED if connected
     if ( webusb_connected ) {
+        xQueueReset(webUsbTxQHandle);
+        // HACK: prime WebUSB EPIN where first CAN packet is lost -->
+        uint8_t buf[64];
+        memset(buf, 0, sizeof(buf));
+        tud_vendor_write(buf, sizeof(buf));
+        // <-- End HACK
+
         board_led_write(true);
         xTimerChangePeriod(blinky_tm, pdMS_TO_TICKS(BLINK_ALWAYS_ON), 0);
         if (tud_cdc_connected()) {
@@ -121,6 +139,26 @@ void webusb_set_connect_state(bool isConnected)
             tud_cdc_write_flush();
         }
     }
+}
+
+bool webusb_sendEp(uint8_t * pBuffer)
+{
+    bool ret = true;
+    bool available = (tud_vendor_write_available() >= CFG_TUD_VENDOR_TX_BUFSIZE);
+    bool queueNotEmpty = (uxQueueMessagesWaiting(webUsbTxQHandle) > 0);
+
+    if(queueNotEmpty || !available) {
+        ret = ret && (pdTRUE == xQueueSend(webUsbTxQHandle, pBuffer, 0));
+        if(available) {
+            ret = ret && (pdTRUE == xQueueReceive(webUsbTxQHandle, pBuffer, 0));
+        }
+    }
+
+    if(available) {
+        ret = ret && (CFG_TUD_VENDOR == tud_vendor_write(pBuffer, CFG_TUD_VENDOR_TX_BUFSIZE));
+    }
+
+    return (ret);
 }
 
 //--------------------------------------------------------------------+
@@ -270,6 +308,24 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
     return false;
 }
 
+void tud_vendor_tx_cb(uint8_t itf, uint32_t sent_bytes)
+{
+    uint8_t sendEpPacket[CFG_TUD_VENDOR_TX_BUFSIZE];
+
+    if(tud_vendor_write_available() == CFG_TUD_VENDOR_TX_BUFSIZE) {
+        /* Empty */
+        if(pdTRUE != xQueueReceive(webUsbTxQHandle, &sendEpPacket, 0)) {
+            /* empty */
+            memset(sendEpPacket, 0, CFG_TUD_VENDOR_TX_BUFSIZE);
+        }
+        tud_vendor_write(sendEpPacket, CFG_TUD_VENDOR_TX_BUFSIZE);
+    }
+}
+
+void tud_vendor_rx_cb(uint8_t itf)
+{
+
+}
 
 //--------------------------------------------------------------------+
 // USB Class Device

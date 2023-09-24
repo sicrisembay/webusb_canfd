@@ -10,5 +10,6 @@
 
 void webusb_init(void);
 void webusb_set_connect_state(bool isConnected);
+bool webusb_sendEp(uint8_t * pBuffer);
 
 #endif /* USB_DEVICE_WEBUSB_H_ */
