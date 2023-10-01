@@ -211,6 +211,28 @@ static void can_task(void * pxParam)
                     const uint8_t maxpayload = CFG_TUD_VENDOR_EPSIZE - SZ_USB_BYTES_IN_PACKET - SZ_FRAME_OVERHEAD - SZ_COMMAND_OVERHEAD;
                     //const uint8_t frameSize = SZ_FRAME_OVERHEAD + SZ_COMMAND_OVERHEAD + dlc;
                     uint8_t frameSize = 0;
+
+                    uint8_t command = 0;
+                    if(rxElement.header.FDFormat == FDCAN_CLASSIC_CAN) {
+                        /* Classic CAN */
+                        if(rxElement.header.IdType == FDCAN_STANDARD_ID) {
+                            /* Base Frame */
+                            command = COMMAND_DEVICE_TO_HOST_CAN_STANDARD;
+                        } else {
+                            /* Extended Frame */
+                            command = COMMAND_DEVICE_TO_HOST_CAN_EXTENDED;
+                        }
+                    } else {
+                        /* CAN FD */
+                        if(rxElement.header.IdType == FDCAN_STANDARD_ID) {
+                            /* Base Frame */
+                            command = COMMAND_DEVICE_TO_HOST_FD_STANDARD;
+                        } else {
+                            /* Extended Frame */
+                            command = COMMAND_DEVICE_TO_HOST_FD_EXTENDED;
+                        }
+                    }
+
                     if(dlc > maxpayload) {
                         /* Exceeds the Endpoint Size */
                         multiplePacket = true;
@@ -234,11 +256,15 @@ static void can_task(void * pxParam)
                     packetSequence++;
                     // <-- Frame Prefix
                     // Payload -->
-                    canDeviceToHost[OFFSET_PAYLOAD + OFFSET_COMMAND_ID] = COMMAND_DEVICE_TO_HOST;
+                    canDeviceToHost[OFFSET_PAYLOAD + OFFSET_COMMAND_ID] = command;
                     canDeviceToHost[OFFSET_PAYLOAD + OFFSET_MSGID] =
                             (uint8_t)(rxElement.header.Identifier & 0xFF);
                     canDeviceToHost[OFFSET_PAYLOAD + OFFSET_MSGID + 1] =
                             (uint8_t)((rxElement.header.Identifier >> 8) & 0xFF);
+                    canDeviceToHost[OFFSET_PAYLOAD + OFFSET_MSGID + 2] =
+                            (uint8_t)((rxElement.header.Identifier >> 16) & 0xFF);
+                    canDeviceToHost[OFFSET_PAYLOAD + OFFSET_MSGID + 3] =
+                            (uint8_t)((rxElement.header.Identifier >> 24) & 0xFF);
                     canDeviceToHost[OFFSET_PAYLOAD + OFFSET_DLC] = dlc;
                     for(idx = 0; idx < (multiplePacket ? maxpayload : dlc); idx++) {
                         canDeviceToHost[OFFSET_PAYLOAD + OFFSET_DATA + idx] =
