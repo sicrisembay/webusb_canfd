@@ -1,9 +1,10 @@
 import 'dart:typed_data';
-
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:webusb_canfd/components/command_frame.dart';
 import 'package:webusb_canfd/components/webusb.dart';
+import 'package:webusb_canfd/screens/connect_sreen.dart';
+import 'package:webusb_canfd/screens/main_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -17,7 +18,12 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'WebUSB CAN-FD',
       theme: ThemeData.dark(),
-      home: const MyHomePage(title: 'WebUSB CAN-FD'),
+      scrollBehavior: AppCustomScrollBehavior(),
+      initialRoute: ConnectScreen.id,
+      routes: {
+        ConnectScreen.id: (context) => const ConnectScreen(),
+        MainScreen.id: (context) => const MainScreen()
+      },
     );
   }
 }
@@ -36,12 +42,6 @@ class _MyHomePageState extends State<MyHomePage> {
   late String rxTestPacket;
 
   @override
-  void initState() {
-    /// TODO
-    super.initState();
-  }
-
-  @override
   void dispose() {
     webUsbDevice.disconnect();
     super.dispose();
@@ -57,40 +57,6 @@ class _MyHomePageState extends State<MyHomePage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            const Expanded(
-              flex: 1,
-              child: Text(
-                'Connection Test',
-                style: TextStyle(fontSize: 40.0),
-              ),
-            ),
-            Expanded(
-              flex: 1,
-              child: Column(children: [
-                const Text(
-                  'Green LED lights up.',
-                ),
-                TextButton(
-                  onPressed: () async {
-                    await webUsbDevice.connect();
-                  },
-                  child: Text('CONNECT'),
-                ),
-              ]),
-            ),
-            Expanded(
-              flex: 1,
-              child: Column(
-                children: [
-                  const Text('Green LED blinks.'),
-                  TextButton(
-                      onPressed: () async {
-                        webUsbDevice.disconnect();
-                      },
-                      child: Text('DISCONNECT')),
-                ],
-              ),
-            ),
             Expanded(
               flex: 1,
               child: Column(children: [
@@ -103,39 +69,18 @@ class _MyHomePageState extends State<MyHomePage> {
                     child: const Text('SEND TEST PACKET')),
               ]),
             ),
-            Expanded(
-                flex: 1,
-                child: Column(
-                  children: [
-                    const Text('Recieve packet'),
-                    StreamBuilder<CANmessage>(
-                        stream: frameParser.stream,
-                        builder: (context, snapshot) {
-                          String receiveString;
-                          switch (snapshot.connectionState) {
-                            case ConnectionState.active:
-                              {
-                                receiveString = 'msgId: ' +
-                                    snapshot.data!.msgId.toString() +
-                                    ' dlc: ' +
-                                    snapshot.data!.dlc.toString() +
-                                    ' payload: ' +
-                                    snapshot.data!.data.toString();
-                                break;
-                              }
-                            default:
-                              {
-                                receiveString = 'empty';
-                                break;
-                              }
-                          }
-                          return Text(receiveString);
-                        })
-                  ],
-                )),
           ],
         ),
       ),
     );
   }
+}
+
+class AppCustomScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+      };
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
+import 'package:webusb_canfd/components/can_message.dart';
 
 const int kUsbBytesInPacket = 1;
 /*
@@ -21,7 +22,10 @@ const int kSizeFrameOverhead =
 const int kTagSof = 0xff;
 const int kCmdConnect = 0x01;
 const int kCmdHostToDevice = 0x10;
-const int kCmdDeviceToHost = 0x20;
+const int kCmdDeviceToHostCanStandard = 0x20;
+const int kCmdDeviceToHostCanExtended = 0x21;
+const int kCmdDeviceToHostFdStandard = 0x22;
+const int kCmdDeviceToHostFdExtended = 0x23;
 
 const int _bufferSize = 1024;
 
@@ -32,13 +36,13 @@ final Uint8List disconnectPacket = Uint8List.fromList(
 
 class FrameParser {
   final Uint8List _buffer = Uint8List(_bufferSize);
-  final _controller = StreamController<CANmessage>();
+  final _controller = StreamController<CanMessage>.broadcast();
   int _wrPtr = 0;
   int _rdPtr = 0;
 
   FrameParser() {}
 
-  Stream<CANmessage> get stream => _controller.stream;
+  Stream<CanMessage> get stream => _controller.stream;
 
   void addNProcess(Uint8List data) {
     int availableBytes = 0;
@@ -140,25 +144,33 @@ class FrameParser {
 
     int cmd = _buffer[index];
     switch (cmd) {
-      case kCmdDeviceToHost:
+      case kCmdDeviceToHostCanStandard:
         {
-          Uint8List listMsgId = Uint8List(2);
+          Uint8List listMsgId = Uint8List(4);
           listMsgId[0] = _buffer[(index + 1) % _bufferSize];
           listMsgId[1] = _buffer[(index + 2) % _bufferSize];
-          int msgId = listMsgId.buffer.asByteData().getUint16(0, Endian.little);
-          int dlc = _buffer[(index + 3) % _bufferSize];
+          listMsgId[2] = _buffer[(index + 3) % _bufferSize];
+          listMsgId[3] = _buffer[(index + 4) % _bufferSize];
+          int msgId = listMsgId.buffer.asByteData().getUint32(0, Endian.little);
+          int dlc = _buffer[(index + 5) % _bufferSize];
           Uint8List payload = Uint8List(dlc);
           for (int i = 0; i < dlc; i++) {
-            int indexPayload = (index + 4 + i) % _bufferSize;
+            int indexPayload = (index + 6 + i) % _bufferSize;
             payload[i] = _buffer[indexPayload];
           }
 
-          _controller.sink
-              .add(CANmessage(msgId: msgId, dlc: dlc, data: payload));
+          _controller.sink.add(CanMessage(
+              id: msgId,
+              canType: CanType.CAN,
+              idType: CanIdType.BASE,
+              length: dlc,
+              data: payload));
 
-          print('msgId: ' + msgId.toString());
-          print('dlc: ' + dlc.toString());
-          print(payload);
+          if (kDebugMode) {
+            print('msgId: ' + msgId.toString());
+            print('dlc: ' + dlc.toString());
+            print(payload);
+          }
           break;
         }
       default:
@@ -168,12 +180,4 @@ class FrameParser {
         }
     }
   }
-}
-
-class CANmessage {
-  final int msgId;
-  final int dlc;
-  final Uint8List data;
-
-  CANmessage({required this.msgId, required this.dlc, required this.data});
 }

@@ -1,17 +1,11 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import 'package:isolate_manager/isolate_manager.dart';
 import 'package:usb_device/usb_device.dart';
+import 'package:webusb_canfd/components/can_message.dart';
+import 'package:webusb_canfd/globals.dart';
 import 'command_frame.dart';
 
-const int kVendor = 0xCAFE;
-const int kProduct = 0x4011;
-const int kConfiguration = 1;
-const int kInterface = 2;
-const int kEndpoint = 3;
-
 final UsbDevice _usbDevice = UsbDevice();
-final FrameParser frameParser = FrameParser();
 late dynamic _pairedDevice;
 bool _isConnected = false;
 bool _isConnectedPrevious = false;
@@ -23,31 +17,52 @@ void isolateReceiveUSB(dynamic params) async {
   while (true) {
     if (_isConnected) {
       if (!_isConnectedPrevious) {
-        print('WebUSB connected');
-      }
-      USBInTransferResult inTransferResult =
-          await _usbDevice.transferIn(_pairedDevice, kEndpoint, 64);
-      if (inTransferResult.status == StatusResponse.ok) {
-        if (inTransferResult.data[0] == 0) {
-          /* received dummy */
-          await Future.delayed(const Duration(milliseconds: 10));
-        } else {
-          frameParser.addNProcess(inTransferResult.data);
+        if (kDebugMode) {
+          print('WebUSB connected');
         }
-      } else if (inTransferResult.status == StatusResponse.stall) {
-        await _usbDevice.clearHalt(_pairedDevice, 'in', kEndpoint);
-      } else {
-        print(inTransferResult.status);
+      }
+      try {
+        USBInTransferResult inTransferResult = await _usbDevice.transferIn(
+            _pairedDevice, WebUsbDevice.kEndpoint, 64);
+        if (inTransferResult.status == StatusResponse.ok) {
+          if (inTransferResult.data[0] == 0) {
+            /* received dummy */
+            await Future.delayed(const Duration(milliseconds: 1));
+          } else {
+            frameParser.addNProcess(inTransferResult.data);
+          }
+        } else if (inTransferResult.status == StatusResponse.stall) {
+          await _usbDevice.clearHalt(
+              _pairedDevice, 'in', WebUsbDevice.kEndpoint);
+        } else {
+          if (kDebugMode) {
+            print(inTransferResult.status);
+          }
+        }
+      } catch (e) {
+        _isConnected = false;
+        if (kDebugMode) {
+          print(e);
+        }
       }
       _isConnectedPrevious = true;
     } else {
       if (_isConnectedPrevious) {
         _isConnectedPrevious = false;
-        await _usbDevice.transferOut(
-            _pairedDevice, kEndpoint, disconnectPacket.buffer);
-        await _usbDevice.releaseInterface(_pairedDevice, kInterface);
-        await _usbDevice.close(_pairedDevice);
-        print('WebUSB disconnected');
+        if (kDebugMode) {
+          print('WebUSB disconnected');
+        }
+        try {
+          await _usbDevice.transferOut(
+              _pairedDevice, WebUsbDevice.kEndpoint, disconnectPacket.buffer);
+          await _usbDevice.releaseInterface(
+              _pairedDevice, WebUsbDevice.kInterface);
+          await _usbDevice.close(_pairedDevice);
+        } catch (e) {
+          if (kDebugMode) {
+            print(e);
+          }
+        }
       }
       await Future.delayed(const Duration(seconds: 1));
     }
@@ -55,22 +70,33 @@ void isolateReceiveUSB(dynamic params) async {
 }
 
 class WebUsbDevice {
+  static const int kVendor = 0xCAFE;
+  static const int kProduct = 0x4011;
+  static const int kConfiguration = 1;
+  static const int kInterface = 2;
+  static const int kEndpoint = 3;
+
   final isolateManager =
       IsolateManager.createOwnIsolate(isDebug: true, isolateReceiveUSB);
   bool _isSupported = false;
 
   WebUsbDevice() {
     _usbDevice.setOnConnectionCallback((p0) async {
-      print('setOnConnectionCallback called');
+      if (kDebugMode) {
+        print('setOnConnectionCallback called');
+      }
     });
     _usbDevice.setOnDisconnectCallback((p0) {
       _isConnected = false;
-      print('setOnDisconnectCallback called. _isConnected: ' +
-          _isConnected.toString());
+      if (kDebugMode) {
+        print('setOnDisconnectCallback called. _isConnected: $isConnected');
+      }
     });
     isolateManager.start();
     isolateManager.stream.listen((message) {
-      print('Received from isolate: ' + message);
+      if (kDebugMode) {
+        print('Received from isolate: $message');
+      }
     });
   }
 
@@ -84,7 +110,10 @@ class WebUsbDevice {
     await isolateManager.stop();
   }
 
-  Future<void> connect() async {
+  Future<bool> connect(
+      {required CanType canType,
+      required CanIdType idType,
+      CanNominalRate nominalRate = CanNominalRate.NRATE1000}) async {
     _isSupported = await _usbDevice.isSupported();
     if (_isSupported == false) {
       throw 'WebUSB not supported!';
@@ -99,19 +128,15 @@ class WebUsbDevice {
           _pairedDevice, kEndpoint, connectPacket.buffer);
       if (usbOutTransferResult.status == StatusResponse.ok) {
         _isConnected = true;
-        await isolateManager.sendMessage('test-message');
       }
     }
+    return _isConnected;
   }
 
   Future<void> disconnect() async {
     if (_isConnected) {
       try {
         _isConnected = false;
-        // await _usbDevice.transferOut(
-        //     _pairedDevice, kEndpoint, disconnectPacket.buffer);
-        // await _usbDevice.releaseInterface(_pairedDevice, kInterface);
-        // await _usbDevice.close(_pairedDevice);
       } catch (e) {
         if (kDebugMode) {
           print(e);

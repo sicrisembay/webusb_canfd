@@ -1,11 +1,11 @@
 name: webusb_canfd
 description: A WebUSB CAN-FD project.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: "none" # Remove this line if you wish to publish to pub.dev
 
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.1.0 <4.0.0'
+  sdk: ">=3.1.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -14,6 +14,8 @@ dependencies:
   cupertino_icons: ^1.0.2
   usb_device: ^1.0.2
   isolate_manager: ^4.1.1
+  multi_dropdown: ^2.1.0
+  flutter_expandable_table: ^2.0.1
 
 dev_dependencies:
   flutter_test:
